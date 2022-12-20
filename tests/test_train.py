@@ -3,7 +3,7 @@ import sys
 import os
 sys.path.insert(1, os.path.join(os.getcwd(), "src"))
 from adapter import SparkAdapter
-from train import Trainer
+from train import TfIdf
 
 trainer = Trainer()
 

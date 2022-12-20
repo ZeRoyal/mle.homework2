@@ -1,19 +1,21 @@
 import os
 import shutil
+import sys
 
-from pyspark.ml.feature import HashingTF, IDF
+from pyspark.ml.feature import HashingTF, IDF, IDFModel
 from pyspark.mllib.linalg import Vectors
 from pyspark.mllib.linalg.distributed import IndexedRow, IndexedRowMatrix
 from pyspark.mllib.linalg.distributed import MatrixEntry, CoordinateMatrix
+import numpy as np
 
-from adapter import SparkAdapter
 import traceback
 import configparser
+from adapter import SparkAdapter
 from logger import Logger
 
 SHOW_LOG = True
 
-class Trainer():
+class TfIdf():
 
     def __init__(self) -> None:
         """
@@ -34,44 +36,19 @@ class Trainer():
         if not self.is_model_removed(self.models_watched_path):
             return False
 
-        watched_matrix = CoordinateMatrix(grouped.flatMapValues(lambda x: x).map(lambda x: MatrixEntry(x[0], x[1], 1.0)))
+        self.watched_matrix = CoordinateMatrix(grouped.flatMapValues(lambda x: x) \
+                                                        .map(lambda x: MatrixEntry(x[0], x[1], 1.0)))
         
         try:
-            watched_matrix.entries.toDF().write.parquet(self.models_watched_path)
-            self.config["MODEL"]["WATCHED_PATH"] = self.models_watched_path
+            self.watched_matrix.entries.toDF().write.parquet(self.models_watched_path)
+            self.config["MODEL"]["WATCHED_MATRIX_PATH"] = self.models_watched_path
             self.log.info(f"Watched movies are stored in {self.models_watched_path}")
+
         except:
             self.log.error(traceback.format_exc())
             return False
 
         return os.path.exists(self.models_watched_path)
-    
-    def make_tf(self, grouped, path='./models/TF_MODEL'):
-        """
-        Creating tf model
-        """
-        if not self.is_model_removed(path):
-            return None
-
-        df = grouped.toDF(schema=["user_id", "movie_ids"])
-
-        FEATURES_COUNT = self.config.getint("MODEL", "FEATURES_COUNT", fallback=10000)
-        self.log.info(f'TF-IDF features count = {FEATURES_COUNT}')
-
-        # считаем TF - частоту токенов (фильмов), должна быть 1, т.к. пользователь либо посмотрел, либо не посмотрел фильм
-        hashingTF = HashingTF(inputCol="movie_ids", outputCol="rawFeatures", numFeatures=FEATURES_COUNT)
-        tf_features = hashingTF.transform(df)
-
-        try:
-            hashingTF.write().overwrite().save(path)
-            self.config["MODEL"]["TF_PATH"] = path
-            self.log.info(f"TF model stored at {path}")
-        except:
-            self.log.error(traceback.format_exc())
-            return None
-        
-        return tf_features
-
 
     def is_model_removed(self, path) -> bool:
         """
@@ -87,7 +64,23 @@ class Trainer():
             return False
         return True
 
-    def write_idf(self, idf_features, path='./models/IDF_FEATURES') -> bool:
+    
+    def tfIDF(self, grouped)
+
+        hashingTF = HashingTF(inputCol="movie_ids", outputCol="rawFeatures", numFeatures=FEATURES_COUNT)
+        tf = hashingTF.transform(df)
+        tf.cache()
+
+        idf = IDF(inputCol="rawFeatures", outputCol="features").fit(tf)
+
+        # get features for users, saving them
+        self.tf_idf = idf.transform(tf)
+        if not self.write_tfidf():
+            return False
+
+        return True
+
+    def write_tfidf(self, path='./models/IDF_FEATURES') -> bool:
         '''
         idf write with config section
         '''
@@ -95,61 +88,33 @@ class Trainer():
             return False
 
         try:
-            idf_features.write.format("parquet").save(path, mode='overwrite')
-            self.config["MODEL"]["IDF_FEATURES_PATH"] = path
-            self.log.info(f"IDF features stored at {path}")
+            self.tf_idf.write.format("parquet").save(path, mode='overwrite')
+            self.log.info(f"TFIDF saved to {path}")
+            self.config["MODEL"]["TFIDF_FEATURES_PATH"] = path
         except:
             self.log.error(traceback.format_exc())
             return False
-        return True
-
-    
-    def make_idf(self, tf_features, path='./models/IDF_MODEL') -> bool:
-        """
-        idf setuping
-        """
-        if not self.is_model_removed(path):
-            return False
-        idf = IDF(inputCol="rawFeatures", outputCol="features")
-        idf = idf.fit(tf_features)
-
-        self.log.info(f"IDF model type: {type(idf)}")
-
-        try:
-            idf.write().overwrite().save(path)
-            self.config["MODEL"]["IDF_PATH"] = path
-            self.log.info(f"IDF model stored at {path}")
-        except:
-            self.log.error(traceback.format_exc())
-            return False
-
-        # get features for users, saving them
-        idf_features = idf.transform(tf_features)
-        if not self.write_idf(idf_features):
-            return False
-        
         return True
 
     def train(self, input_filename=None) -> bool:
         '''
         main training method
         '''
-        try:
-            adapter = SparkAdapter()
-            sc = adapter.get_context()
-            spark = adapter.get_session()
-        except:
-            self.log.error(traceback.format_exc())
-            return False
+        # try:
+        #     adapter = SparkAdapter()
+        #     sc = adapter.get_context()
+        #     spark = adapter.get_session()
+        # except:
+        #     self.log.error(traceback.format_exc())
+        #     return False
         
-        if input_filename is None:
-            INPUT_FILENAME = self.config.get("DATA", "INPUT_FILE", fallback="./data/sample.csv")
-        else:
-            INPUT_FILENAME = input_filename
-        self.log.info(f'train data filename = {INPUT_FILENAME}')
+        # if input_filename is None:
+        #     INPUT_FILENAME = self.config.get("DATA", "INPUT_FILE", fallback="./data/sample.csv")
+        # else:
+        #     INPUT_FILENAME = input_filename
 
         # reading file with group bying by users
-        grouped = sc.textFile(INPUT_FILENAME, adapter.num_parts) \
+        grouped = sc.textFile(INPUT_FILENAME, self.config.getint("SPARK", "NUM_PARTS", fallback=None)) \
             .map(lambda x: map(int, x.split())).groupByKey() \
             .map(lambda x : (x[0], list(x[1])))
         
@@ -158,22 +123,128 @@ class Trainer():
         if not self.preprocess(grouped):
             return False
         
-        # getting features by tf
-        self.log.info('Train TF model')
-        tf_features = self.make_tf(grouped)
-        if tf_features is None:
-            return False
-        
-        # making idf
-        self.log.info('Train IDF model')
-        if not self.make_idf(tf_features):
+        # making tfidf
+        self.log.info('Get TF-IDF features')
+        if not self.tfIDF(grouped):
             return False
 
         os.remove(self.config_path)
-        with open(self.config_path, 'w') as configfile:
-            self.config.write(configfile)       
+        with open(self.config_path, 'w') as f:
+            self.config.write(f)
+
+        return True
+
+    def useTfIDF(self, is_training=True) -> bool:
+        """
+        get tfidf features for users
+        """  
+        path = self.config.get("MODEL", "TFIDF_FEATURES_PATH") 
+        if not is_training:    
+            if path is None or not os.path.exists(path):
+                self.log.error(f'No TFIDF model! ({path})')
+                return False
+            else:
+                try:
+                    self.tf_idf = self.spark.read.load(path)
+                except:
+                    self.log.error(traceback.format_exc())
+                    return False
+
+        return True
+
+    def use_w_matrix(self, is_training=True) -> bool:
+        """
+        load watched matrix
+        """
+        path = self.config.get("MODEL", "WATCHED_MATRIX_PATH")
+        self.log.info(f'Reading watched_matrix from {path}')
+        if not is_training: 
+            if path is None or not os.path.exists(path):
+                self.log.error(f'No watched matrix found ({path})')
+            else:
+                try:
+                    self.watched_matrix = CoordinateMatrix(self.spark.read.parquet(path) \
+                                                        .rdd.map(lambda row: MatrixEntry(*row)))
+                except:
+                    self.log.error(traceback.format_exc())
+                    return False
+
+        return True
+
+    def get_all_models(self, is_training=True) -> bool:
+        """
+        Main loader
+        """
+        if not is_training:
+            self.log.info('Loading TFIDF')
+            if not self.useTfIDF(is_training=is_training):
+                return False
+
+            self.log.info('Loading matrix for watched movies')
+            if not self.use_w_matrix(is_training=is_training):
+                return False
+
+        return True
+
+    def recommend_check(self):
+        """
+        check for random user
+        """
+
+        self.log.info('Predict existing user recommendations')
+
+        # get features - users matrix
+        self.user_matrix = IndexedRowMatrix(self.tf_idf.rdd.map(
+            lambda row: IndexedRow(row["user_id"], Vectors.dense(row["features"]))
+        ))
+
+        self.log.info('Calculate user similarities')
+        user_sim = self.user_matrix.toBlockMatrix().transpose().toIndexedRowMatrix().columnSimilarities()
+
+        random_user = np.random.randint(low=1, high=20)
+        filtered_user = user_sim.entries.filter(lambda y: y.i == random_user or y.j == random_user)
+
+        # get users with the highest similarity
+        self.user_sim_ascending = filtered_user.sortBy(lambda x: x.value, ascending=False) \
+            .map(lambda x: IndexedRow(x.j if x.i == user_sim else x.i, Vectors.dense(x.value)))
+
+        self.receive_recommend()
+        return True
+
+
+
+    def receive_recommend(self):
+        """
+        Get recommendations by similarity
+        """  
+        self.max_ = 10 
+        self.log.info(f'Recomendations (top {self.max}) for random user: {user_sim}')     
+        weights = IndexedRowMatrix(self.user_sim_ascending).toBlockMatrix().transpose() \
+                                                        .multiply(self.watched.toBlockMatrix())        
+        recommended_movies = weights.transpose().toIndexedRowMatrix().rows \
+                                            .sortBy(lambda row: row.vector.values[0], ascending=False)
+
+        for i, row in enumerate(recommended_movies.collect()):
+            if i >= self.max_:
+                break
+            self.log.info(f'movie # {row.index} (rank: {row.vector[0]})')
+
         return True
 
 if __name__ == "__main__":
-    trainer = Trainer()
-    trainer.train()
+    parser = argparse.ArgumentParser(description="Predictor")
+    parser.add_argument("-t",
+                                 "--tests",
+                                 type=bool,
+                                 help="Select tests",
+                                 required=True,
+                                 default="True",
+                                 const="True",
+                                 nargs="?",
+                                 choices=["True", "False"])
+    args = parser.parse_args()
+    model = TfIdf()
+    if args.is_training:
+        model.train()
+    else:
+        model.recommend_check()

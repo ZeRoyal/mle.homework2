@@ -1,179 +1,185 @@
 import os
 import shutil
 
-from pyspark.ml.feature import HashingTF, IDF
+from pyspark.ml.feature import HashingTF, IDF, IDFModel
 from pyspark.mllib.linalg import Vectors
 from pyspark.mllib.linalg.distributed import IndexedRow, IndexedRowMatrix
 from pyspark.mllib.linalg.distributed import MatrixEntry, CoordinateMatrix
+import numpy as np
 
-from adapter import SparkAdapter
 import traceback
 import configparser
+from adapter import SparkAdapter
 from logger import Logger
 
 SHOW_LOG = True
 
-class Trainer():
+class Processor():
 
-    def __init__(self) -> None:
+    def __init__(self):
         """
-        init constructor with config
+        init with config
         """
         self.config = configparser.ConfigParser()
         self.log = Logger(SHOW_LOG).get_logger(__name__)
         self.config_path = os.path.join(os.getcwd(), 'config.ini')
         self.config.read(self.config_path)
-        self.models_watched_path = './models/WATCHED'
-        self.log.info("Trainer is ready")
+
+        # Spark Adapter with context and session
+        try:
+            self.adapter = SparkAdapter()
+            self.sc = self.adapter.get_context()
+            self.spark = self.adapter.get_session()
+        except:
+            self.log.error(traceback.format_exc())
+
+        # load models
+        if not self.get_all_models():
+            raise Exception('Can\'t load models')
+        
+        self.log.info("Processor is ready")
         pass
 
-    def preprocess(self, grouped) -> bool:
+    def get_watched_matrix(self) -> bool:
         """
-        Create matrix for films have been watched
+        load watched matrix
         """
-        if not self.is_model_removed(self.models_watched_path):
+        path = self.config.get("MODEL", "WATCHED_PATH")
+        if path is None or not os.path.exists(path):
+            self.log.error('Matrix of watched movies doesn\'t exists')
             return False
-
-        watched_matrix = CoordinateMatrix(grouped.flatMapValues(lambda x: x).map(lambda x: MatrixEntry(x[0], x[1], 1.0)))
         
+        self.log.info(f'Reading {path}')
         try:
-            watched_matrix.entries.toDF().write.parquet(self.models_watched_path)
-            self.config["MODEL"]["WATCHED_PATH"] = self.models_watched_path
-            self.log.info(f"Watched movies are stored in {self.models_watched_path}")
+            self.watched = CoordinateMatrix(self.spark.read.parquet(path) \
+                .rdd.map(lambda row: MatrixEntry(*row)))
         except:
             self.log.error(traceback.format_exc())
             return False
-
-        return os.path.exists(self.models_watched_path)
+        return True
     
-    def make_tf(self, grouped, path='./models/TF_MODEL'):
+    def get_tf(self) -> bool:
         """
-        Creating tf model
+        tf loading
         """
-        if not self.is_model_removed(path):
-            return None
-
-        df = grouped.toDF(schema=["user_id", "movie_ids"])
-
-        FEATURES_COUNT = self.config.getint("MODEL", "FEATURES_COUNT", fallback=10000)
-        self.log.info(f'TF-IDF features count = {FEATURES_COUNT}')
-
-        # считаем TF - частоту токенов (фильмов), должна быть 1, т.к. пользователь либо посмотрел, либо не посмотрел фильм
-        hashingTF = HashingTF(inputCol="movie_ids", outputCol="rawFeatures", numFeatures=FEATURES_COUNT)
-        tf_features = hashingTF.transform(df)
-
-        try:
-            hashingTF.write().overwrite().save(path)
-            self.config["MODEL"]["TF_PATH"] = path
-            self.log.info(f"TF model stored at {path}")
-        except:
-            self.log.error(traceback.format_exc())
-            return None
+        path = self.config.get("MODEL", "TF_PATH")
+        if path is None or not os.path.exists(path):
+            self.log.error('TF model doesn\'t exists')
+            return False
         
-        return tf_features
-
-
-    def is_model_removed(self, path) -> bool:
-        """
-        Try to remove old model and check if it was succeed
-        """
-        if os.path.exists(path):
-            if os.path.isdir(path):
-                shutil.rmtree(path)
-            else:
-                os.remove(path)
-        if os.path.exists(path):
-            self.log.error(f'Can\'t remove {path}')
-            return False
-        return True
-
-    def write_idf(self, idf_features, path='./models/IDF_FEATURES') -> bool:
-        '''
-        idf write with config section
-        '''
-        if not self.is_model_removed(path):
-            return False
-
+        self.log.info(f'Reading {path}')
         try:
-            idf_features.write.format("parquet").save(path, mode='overwrite')
-            self.config["MODEL"]["IDF_FEATURES_PATH"] = path
-            self.log.info(f"IDF features stored at {path}")
+            self.hashingTF = HashingTF.load(path)
         except:
             self.log.error(traceback.format_exc())
             return False
         return True
-
     
-    def make_idf(self, tf_features, path='./models/IDF_MODEL') -> bool:
+    def get_idf(self) -> bool:
         """
-        idf setuping
+        get idf
         """
-        if not self.is_model_removed(path):
+
+        path = self.config.get("MODEL", "IDF_PATH")
+        if path is None or not os.path.exists(path):
+            self.log.error('IDF model doesn\'t exists')
             return False
-        idf = IDF(inputCol="rawFeatures", outputCol="features")
-        idf = idf.fit(tf_features)
-
-        self.log.info(f"IDF model type: {type(idf)}")
-
+        
+        self.log.info(f'Reading {path}')
         try:
-            idf.write().overwrite().save(path)
-            self.config["MODEL"]["IDF_PATH"] = path
-            self.log.info(f"IDF model stored at {path}")
+            self.idf = IDFModel.load(path)
         except:
             self.log.error(traceback.format_exc())
             return False
-
-        # get features for users, saving them
-        idf_features = idf.transform(tf_features)
-        if not self.write_idf(idf_features):
+        return True
+    
+    def get_idf_features(self) -> bool:
+        """
+        get idf features for users
+        """        
+        path = self.config.get("MODEL", "IDF_FEATURES_PATH")
+        if path is None or not os.path.exists(path):
+            self.log.error('IDF features doesn\'t exists')
             return False
         
-        return True
-
-    def train(self, input_filename=None) -> bool:
-        '''
-        main training method
-        '''
+        self.log.info(f'Reading {path}')
         try:
-            adapter = SparkAdapter()
-            sc = adapter.get_context()
-            spark = adapter.get_session()
+            self.idf_features = self.spark.read.load(path)
         except:
             self.log.error(traceback.format_exc())
             return False
-        
-        if input_filename is None:
-            INPUT_FILENAME = self.config.get("DATA", "INPUT_FILE", fallback="./data/sample.csv")
-        else:
-            INPUT_FILENAME = input_filename
-        self.log.info(f'train data filename = {INPUT_FILENAME}')
-
-        # reading file with group bying by users
-        grouped = sc.textFile(INPUT_FILENAME, adapter.num_parts) \
-            .map(lambda x: map(int, x.split())).groupByKey() \
-            .map(lambda x : (x[0], list(x[1])))
-        
-        # watched films > matrix
-        self.log.info('Calculating matrix of watched movies')
-        if not self.preprocess(grouped):
-            return False
-        
-        # getting features by tf
-        self.log.info('Train TF model')
-        tf_features = self.make_tf(grouped)
-        if tf_features is None:
-            return False
-        
-        # making idf
-        self.log.info('Train IDF model')
-        if not self.make_idf(tf_features):
-            return False
-
-        os.remove(self.config_path)
-        with open(self.config_path, 'w') as configfile:
-            self.config.write(configfile)       
         return True
+
+    def get_all_models(self) -> bool:
+        """
+        Main loader
+        """
+
+        self.log.info('Loading watched movies')
+        if not self.get_watched_matrix():
+            return False
+        
+        self.log.info('Loading TF model')
+        if not self.get_tf():
+            return False
+
+        self.log.info('Loading IDF model')
+        if not self.get_idf():
+            return False
+
+        self.log.info('Loading IDF features')
+        if not self.get_idf_features():
+            return False
+
+        return True
+    
+    def receive_recomend(self, ordered_similarity, max_count=5) -> list:
+        """
+        Get recommendations by similarity
+        """        
+        self.log.info('Calculate movies recommendations')
+        users_sim_matrix = IndexedRowMatrix(ordered_similarity)
+        multpl = users_sim_matrix.toBlockMatrix().transpose().multiply(self.watched.toBlockMatrix())        
+        ranked_movies = multpl.transpose().toIndexedRowMatrix().rows.sortBy(lambda row: row.vector.values[0], ascending=False)
+
+        result = []
+        for i, row in enumerate(ranked_movies.collect()):
+            if i >= max_count:
+                break
+            result.append((row.index, row.vector[0]))
+        return result
+
+    def recommend_check(self):
+        """
+        check for random user
+        """
+
+        self.log.info('Sample existing user recomendation')
+
+        # get features - users matrix
+        temp_matrix = IndexedRowMatrix(self.idf_features.rdd.map(
+            lambda row: IndexedRow(row["user_id"], Vectors.dense(row["features"]))
+        ))
+        temp_block = temp_matrix.toBlockMatrix()
+
+        self.log.info('Calculate similarities')
+        similarities = temp_block.transpose().toIndexedRowMatrix().columnSimilarities()
+
+        user_id = np.random.randint(low=0, high=self.watched.numCols())
+        self.log.info(f'user ID: {user_id}')
+        filtered = similarities.entries.filter(lambda x: x.i == user_id or x.j == user_id)
+
+        # get users with the highest similarity
+        ordered_similarity = filtered.sortBy(lambda x: x.value, ascending=False) \
+            .map(lambda x: IndexedRow(x.j if x.i == user_id else x.i, Vectors.dense(x.value)))
+
+        recomendations = self.receive_recomend(ordered_similarity)
+        self.log.info('TOP recomendations for existing user:')
+        for movie_id, rank in recomendations:
+            self.log.info(f'- movie # {movie_id} (rank: {rank})')
+        pass
+
 
 if __name__ == "__main__":
-    trainer = Trainer()
-    trainer.train()
+    processor = Processor()
+    processor.recommend_check()

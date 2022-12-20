@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  app:
+    build: 
+      context: ./
+      dockerfile: ./Dockerfile
+    volumes:
+    - type: bind
+      source: ./data
+      target: /data
+    command: bash -c "gdown 'https://www.googleapis.com/drive/v3/files/1tJNOHP4_OYnlTuS0qHekwfE45huU9BSM?alt=media&key=AIzaSyA7biXTLtzy1SUeRGA-e6CpX2YRrm9GCl0' -O 'data/real_data' && spark-submit src/train.py && spark-submit src/process.py && python -m pytest tests -s --disable-pytest-warnings"
+    ports:
+      - 8000:8000
+    environment:
+      PYTHONUNBUFFERED: 1
+    image: zeroyal/mle.homework2:latest

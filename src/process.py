@@ -58,3 +58,47 @@ class Processor():
             return False
         return True
     
+    def get_tf(self) -> bool:
+        """
+        tf loading
+        """
+        path = self.config.get("MODEL", "TF_PATH")
+        if path is None or not os.path.exists(path):
+            self.log.error('TF model doesn\'t exists')
+            return False
+        
+        self.log.info(f'Reading {path}')
+        try:
+            self.hashingTF = HashingTF.load(path)
+        except:
+            self.log.error(traceback.format_exc())
+            return False
+        return True
+    
+    def get_idf(self) -> bool:
+        """
+        get idf
+        """
+
+        path = self.config.get("MODEL", "IDF_PATH")
+        if path is None or not os.path.exists(path):
+            self.log.error('IDF model doesn\'t exists')
+            return False
+        
+        self.log.info(f'Reading {path}')
+        try:
+            self.idf = IDFModel.load(path)
+        except:
+            self.log.error(traceback.format_exc())
+            return False
+        return True
+
+
+    def recommend_check(self):
+        """
+        check for random user
+        """
+
+        self.log.info('Sample existing user recomendation')
+
+        pass

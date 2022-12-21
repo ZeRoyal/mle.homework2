@@ -6,6 +6,8 @@ from pyspark.ml.feature import HashingTF, IDF, IDFModel
 from pyspark.mllib.linalg import Vectors
 from pyspark.mllib.linalg.distributed import IndexedRow, IndexedRowMatrix
 from pyspark.mllib.linalg.distributed import MatrixEntry, CoordinateMatrix
+from pyspark import SparkContext, SparkConf
+from pyspark.sql.session import SparkSession
 import numpy as np
 
 import traceback
@@ -28,6 +30,34 @@ class TfIdf():
         self.models_watched_path = './models/WATCHED_MATRIX_PATH'
         self.tfidf_path ='./models/TFIDF_FEATURES_PATH'
         self.log.info("TfIdf is ready")
+        
+        # Spark config from config.ini
+        self.log.info("Config for Spark")
+        self.config_s = SparkConf()
+        self.config_s.set("spark.app.name", "mle.homework2")
+        self.config_s.set("spark.master", "local")
+        self.config_s.set("spark.executor.cores", \
+            self.config.get("SPARK", "NUM_PROCESSORS", fallback="3"))
+        self.config_s.set("spark.executor.instances", \
+            self.config.get("SPARK", "NUM_EXECUTORS", fallback="1"))
+        self.config_s.set("spark.executor.memory", "16g")
+        self.config_s.set("spark.locality.wait", "0")
+        self.config_s.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+        self.config_s.set("spark.kryoserializer.buffer.max", "2000")
+        self.config_s.set("spark.executor.heartbeatInterval", "6000s")
+        self.config_s.set("spark.network.timeout", "10000000s")
+        self.config_s.set("spark.shuffle.spill", "true")
+        self.config_s.set("spark.driver.memory", "16g")
+        self.config_s.set("spark.driver.maxResultSize", "16g")
+
+        self.num_parts = self.config.getint("SPARK", "NUM_PARTS", fallback=None)
+        self.log.info("Getting Spark config:")
+        for conf in self.config_s.getAll():
+            self.log.info(f'{conf[0].upper()} = {conf[1]}')
+        
+        # context and session
+        self.sc = None
+        self.spark = None
 
     def preprocess(self, grouped) -> bool:
         """
@@ -101,22 +131,33 @@ class TfIdf():
     def train(self, input_filename=None) -> bool:
         '''
         main training method
-        '''
-        # try:
-        #     adapter = SparkAdapter()
-        #     sc = adapter.get_context()
-        #     spark = adapter.get_session()
-        # except:
-        #     self.log.error(traceback.format_exc())
-        #     return False
-        
-        # if input_filename is None:
-        #     INPUT_FILENAME = self.config.get("DATA", "INPUT_FILE", fallback="./data/sample.csv")
-        # else:
-        #     INPUT_FILENAME = input_filename
+        '''        
+        #Get spark context
 
+        if self.sc is None:
+            try:
+                self.sc = SparkContext(conf=self.config_s)
+                self.log.info("Initilizing SparkContext()")
+            except:
+                self.log.error(traceback.format_exc())
+                return False
+
+
+        #Get spark session
+
+        if self.spark is None:
+            try:
+                self.spark = SparkSession(self.get_context())
+                self.log.info("Initilizing SparkSession()")
+            except:
+                self.log.error(traceback.format_exc())
+                return False
+
+
+        FILENAME = self.config.get("DATA", "INPUT_FILE", fallback="./data/sample.csv") if input_filename is None \
+                                                                                                else input_filename
         # reading file with group bying by users
-        spark_grouped_df = sc.textFile(INPUT_FILENAME, self.config.getint("SPARK", "NUM_PARTS", fallback=None)) \
+        spark_grouped_df = sc.textFile(FILENAME, self.config.getint("SPARK", "NUM_PARTS", fallback=None)) \
             .map(lambda x: map(int, x.split())).groupByKey() \
             .map(lambda x : (x[0], list(x[1])))
         

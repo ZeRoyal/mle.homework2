@@ -1,7 +1,7 @@
 import os
 import shutil
 import sys
-
+import argparse
 from pyspark.ml.feature import HashingTF, IDF, IDFModel
 from pyspark.mllib.linalg import Vectors
 from pyspark.mllib.linalg.distributed import IndexedRow, IndexedRowMatrix
@@ -12,7 +12,7 @@ import numpy as np
 
 import traceback
 import configparser
-from adapter import SparkAdapter
+
 from logger import Logger
 
 SHOW_LOG = True
@@ -95,11 +95,12 @@ class TfIdf():
         return True
 
     
-    def tfIDF(self, df)
+    def tfIDF(self, df):
         '''
         create TF-IDF and save it for testing
         '''
-        hashingTF = HashingTF(inputCol="movie_ids", outputCol="rawFeatures", numFeatures=FEATURES_COUNT)
+        df = df.toDF(schema=['user_id', 'movie_ids'])
+        hashingTF = HashingTF(inputCol="movie_ids", outputCol="rawFeatures", numFeatures=10000)
         tf = hashingTF.transform(df)
         tf.cache()
 
@@ -116,7 +117,7 @@ class TfIdf():
         '''
         idf write with config section
         '''
-        if not self.is_model_removed(path):
+        if not self.is_model_removed(self.tfidf_path):
             return False
 
         try:
@@ -147,7 +148,7 @@ class TfIdf():
 
         if self.spark is None:
             try:
-                self.spark = SparkSession(self.get_context())
+                self.spark = SparkSession(self.sc)
                 self.log.info("Initilizing SparkSession()")
             except:
                 self.log.error(traceback.format_exc())
@@ -157,7 +158,7 @@ class TfIdf():
         FILENAME = self.config.get("DATA", "INPUT_FILE", fallback="./data/sample.csv") if input_filename is None \
                                                                                                 else input_filename
         # reading file with group bying by users
-        spark_grouped_df = sc.textFile(FILENAME, self.config.getint("SPARK", "NUM_PARTS", fallback=None)) \
+        spark_grouped_df = self.sc.textFile(FILENAME, self.config.getint("SPARK", "NUM_PARTS", fallback=None)) \
             .map(lambda x: map(int, x.split())).groupByKey() \
             .map(lambda x : (x[0], list(x[1])))
         
@@ -168,7 +169,7 @@ class TfIdf():
         
         # making tfidf
         self.log.info('Get TF-IDF features')
-        if not self.tfIDF(grouped):
+        if not self.tfIDF(spark_grouped_df):
             return False
 
         os.remove(self.config_path)
@@ -277,14 +278,14 @@ class TfIdf():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Predictor")
     parser.add_argument("-t",
-                                 "--tests",
+                                 "--is_training",
                                  type=bool,
-                                 help="Select tests",
+                                 help="Select mode",
                                  required=True,
-                                 default="True",
-                                 const="True",
+                                 default=True,
+                                 const=True,
                                  nargs="?",
-                                 choices=["True", "False"])
+                                 choices=[True, False])
     args = parser.parse_args()
     model = TfIdf()
     if args.is_training:

@@ -25,9 +25,9 @@ class TfIdf():
         self.log = Logger(SHOW_LOG).get_logger(__name__)
         self.config_path = os.path.join(os.getcwd(), 'config.ini')
         self.config.read(self.config_path)
-        self.models_watched_path = './models/WATCHED'
-        self.log.info("Trainer is ready")
-        pass
+        self.models_watched_path = './models/WATCHED_MATRIX_PATH'
+        self.tfidf_path ='./models/TFIDF_FEATURES_PATH'
+        self.log.info("TfIdf is ready")
 
     def preprocess(self, grouped) -> bool:
         """
@@ -65,8 +65,10 @@ class TfIdf():
         return True
 
     
-    def tfIDF(self, grouped)
-
+    def tfIDF(self, df)
+        '''
+        create TF-IDF and save it for testing
+        '''
         hashingTF = HashingTF(inputCol="movie_ids", outputCol="rawFeatures", numFeatures=FEATURES_COUNT)
         tf = hashingTF.transform(df)
         tf.cache()
@@ -80,7 +82,7 @@ class TfIdf():
 
         return True
 
-    def write_tfidf(self, path='./models/IDF_FEATURES') -> bool:
+    def write_tfidf(self) -> bool:
         '''
         idf write with config section
         '''
@@ -88,9 +90,9 @@ class TfIdf():
             return False
 
         try:
-            self.tf_idf.write.format("parquet").save(path, mode='overwrite')
-            self.log.info(f"TFIDF saved to {path}")
-            self.config["MODEL"]["TFIDF_FEATURES_PATH"] = path
+            self.tf_idf.write.format("parquet").save(self.tfidf_path, mode='overwrite')
+            self.log.info(f"TFIDF saved to {self.tfidf_path}")
+            self.config["MODEL"]["TFIDF_FEATURES_PATH"] = self.tfidf_path
         except:
             self.log.error(traceback.format_exc())
             return False
@@ -114,13 +116,13 @@ class TfIdf():
         #     INPUT_FILENAME = input_filename
 
         # reading file with group bying by users
-        grouped = sc.textFile(INPUT_FILENAME, self.config.getint("SPARK", "NUM_PARTS", fallback=None)) \
+        spark_grouped_df = sc.textFile(INPUT_FILENAME, self.config.getint("SPARK", "NUM_PARTS", fallback=None)) \
             .map(lambda x: map(int, x.split())).groupByKey() \
             .map(lambda x : (x[0], list(x[1])))
         
         # watched films > matrix
         self.log.info('Calculating matrix of watched movies')
-        if not self.preprocess(grouped):
+        if not self.preprocess(spark_grouped_df):
             return False
         
         # making tfidf

@@ -267,8 +267,6 @@ class TfIdf():
 
         random_user = np.random.randint(low=0, high=self.watched_matrix.numCols())
         filtered_user = self.user_sim.entries.filter(lambda y: y.i == random_user or y.j == random_user)
-        print(f"====== !! {filtered_user} filtered_user ==============") 
-        #print(f"====== !! {filtered_user.sortBy(lambda x: x.value, ascending=False).map(lambda x: IndexedRow(x.j if x.i == self.random_user else x.i, Vectors.dense(x.value)))} filtered_user2 ==============") 
         # get users with the highest similarity
 
         self.user_sim_ascending = filtered_user.sortBy(lambda x: x.value, ascending=False) \
@@ -284,7 +282,7 @@ class TfIdf():
         Get recommendations by similarity
         """  
         self.max_ = 10 
-        self.log.info(f'Recomendations (top {self.max}) for random user: {user_sim}')     
+        self.log.info(f'Recomendations (top {self.max_}) for random user')     
         weights = IndexedRowMatrix(self.user_sim_ascending).toBlockMatrix().transpose() \
                                                         .multiply(self.watched_matrix.toBlockMatrix())        
         recommended_movies = weights.transpose().toIndexedRowMatrix().rows \

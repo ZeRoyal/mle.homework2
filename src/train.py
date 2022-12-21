@@ -117,8 +117,8 @@ class TfIdf():
         '''
         idf write with config section
         '''
-#        if not self.is_model_removed(self.tfidf_path):
-#            return False
+        if not self.is_model_removed(self.tfidf_path):
+            return False
 
         try:
             self.tf_idf.write.format("parquet").save(self.tfidf_path, mode='overwrite')
@@ -126,7 +126,7 @@ class TfIdf():
             self.config["MODEL"]["TFIDF_FEATURES_PATH"] = self.tfidf_path
         except:
             self.log.error(traceback.format_exc())
-            return True
+            return False
         return True
 
     def train(self, input_filename=None) -> bool:
@@ -172,10 +172,9 @@ class TfIdf():
         if not self.tfIDF(spark_grouped_df):
             return False
 
-#        os.remove(self.config_path)
-#        with open(self.config_path, 'w') as f:
-#            print("PROBLEM===================")
-#            self.config.write(f)
+        os.remove(self.config_path)
+        with open(self.config_path, 'w') as f:
+            self.config.write(f)
 
         return True
 
@@ -257,7 +256,7 @@ class TfIdf():
         """
 
         self.log.info('Predict existing user recommendations')
-        print(f"{self.tf_idf} WTF is =============")
+
         # get features - users matrix
         self.user_matrix = IndexedRowMatrix(self.tf_idf.rdd.map(
             lambda row: IndexedRow(row["user_id"], Vectors.dense(row["features"]))
@@ -285,9 +284,7 @@ class TfIdf():
         Get recommendations by similarity
         """  
         self.max_ = 10 
-        self.log.info(f'Recommendations (top {self.max_}) for random user')     
-        print(f"===== {self.tf_idf} ======================")
-        print(f"====== !! {self.user_sim_ascending} ==============") 
+        self.log.info(f'Recomendations (top {self.max}) for random user: {user_sim}')     
         weights = IndexedRowMatrix(self.user_sim_ascending).toBlockMatrix().transpose() \
                                                         .multiply(self.watched_matrix.toBlockMatrix())        
         recommended_movies = weights.transpose().toIndexedRowMatrix().rows \

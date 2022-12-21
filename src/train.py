@@ -117,8 +117,8 @@ class TfIdf():
         '''
         idf write with config section
         '''
-        if not self.is_model_removed(self.tfidf_path):
-            return False
+#        if not self.is_model_removed(self.tfidf_path):
+#            return False
 
         try:
             self.tf_idf.write.format("parquet").save(self.tfidf_path, mode='overwrite')
@@ -126,7 +126,7 @@ class TfIdf():
             self.config["MODEL"]["TFIDF_FEATURES_PATH"] = self.tfidf_path
         except:
             self.log.error(traceback.format_exc())
-            return False
+            return True
         return True
 
     def train(self, input_filename=None) -> bool:
@@ -172,9 +172,10 @@ class TfIdf():
         if not self.tfIDF(spark_grouped_df):
             return False
 
-        os.remove(self.config_path)
-        with open(self.config_path, 'w') as f:
-            self.config.write(f)
+#        os.remove(self.config_path)
+#        with open(self.config_path, 'w') as f:
+#            print("PROBLEM===================")
+#            self.config.write(f)
 
         return True
 
@@ -182,6 +183,26 @@ class TfIdf():
         """
         get tfidf features for users
         """  
+        #Get spark context
+
+        if self.sc is None:
+            try:
+                self.sc = SparkContext(conf=self.config_s)
+                self.log.info("Initilizing SparkContext()")
+            except:
+                self.log.error(traceback.format_exc())
+                return False
+
+
+        #Get spark session
+
+        if self.spark is None:
+            try:
+                self.spark = SparkSession(self.sc)
+                self.log.info("Initilizing SparkSession()")
+            except:
+                self.log.error(traceback.format_exc())
+                return False
         path = self.config.get("MODEL", "TFIDF_FEATURES_PATH") 
         if not is_training:    
             if path is None or not os.path.exists(path):
@@ -236,21 +257,23 @@ class TfIdf():
         """
 
         self.log.info('Predict existing user recommendations')
-
+        print(f"{self.tf_idf} WTF is =============")
         # get features - users matrix
         self.user_matrix = IndexedRowMatrix(self.tf_idf.rdd.map(
             lambda row: IndexedRow(row["user_id"], Vectors.dense(row["features"]))
         ))
-
+        self.user_matrix_to_block = self.user_matrix.toBlockMatrix()
         self.log.info('Calculate user similarities')
-        user_sim = self.user_matrix.toBlockMatrix().transpose().toIndexedRowMatrix().columnSimilarities()
+        self.user_sim = self.user_matrix_to_block.transpose().toIndexedRowMatrix().columnSimilarities()
 
-        random_user = np.random.randint(low=1, high=20)
-        filtered_user = user_sim.entries.filter(lambda y: y.i == random_user or y.j == random_user)
-
+        random_user = np.random.randint(low=0, high=self.watched_matrix.numCols())
+        filtered_user = self.user_sim.entries.filter(lambda y: y.i == random_user or y.j == random_user)
+        print(f"====== !! {filtered_user} filtered_user ==============") 
+        #print(f"====== !! {filtered_user.sortBy(lambda x: x.value, ascending=False).map(lambda x: IndexedRow(x.j if x.i == self.random_user else x.i, Vectors.dense(x.value)))} filtered_user2 ==============") 
         # get users with the highest similarity
+
         self.user_sim_ascending = filtered_user.sortBy(lambda x: x.value, ascending=False) \
-            .map(lambda x: IndexedRow(x.j if x.i == user_sim else x.i, Vectors.dense(x.value)))
+            .map(lambda x: IndexedRow(x.j if x.i == random_user else x.i, Vectors.dense(x.value)))
 
         self.receive_recommend()
         return True
@@ -262,9 +285,11 @@ class TfIdf():
         Get recommendations by similarity
         """  
         self.max_ = 10 
-        self.log.info(f'Recomendations (top {self.max}) for random user: {user_sim}')     
+        self.log.info(f'Recommendations (top {self.max_}) for random user')     
+        print(f"===== {self.tf_idf} ======================")
+        print(f"====== !! {self.user_sim_ascending} ==============") 
         weights = IndexedRowMatrix(self.user_sim_ascending).toBlockMatrix().transpose() \
-                                                        .multiply(self.watched.toBlockMatrix())        
+                                                        .multiply(self.watched_matrix.toBlockMatrix())        
         recommended_movies = weights.transpose().toIndexedRowMatrix().rows \
                                             .sortBy(lambda row: row.vector.values[0], ascending=False)
 
@@ -279,16 +304,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Predictor")
     parser.add_argument("-t",
                                  "--is_training",
-                                 type=bool,
+                                 type=str,
                                  help="Select mode",
                                  required=True,
-                                 default=True,
-                                 const=True,
+                                 default="train",
+                                 const="train",
                                  nargs="?",
-                                 choices=[True, False])
+                                 choices=["train", "test"])
     args = parser.parse_args()
     model = TfIdf()
-    if args.is_training:
+    if args.is_training == "train":
         model.train()
     else:
+        model.get_all_models(is_training=False)
         model.recommend_check()

@@ -1,5 +1,4 @@
 pipeline {
-
     agent any
 
     environment {
@@ -21,15 +20,16 @@ pipeline {
                 cleanWs()
                 bat encoding: 'UTF-8', script: '''
                     chcp 65001
-                    git clone -b main https://github.com/ZeRoyal/mle.homework2.git'''
+                    git clone -b main https://github.com/ZeRoyal/mle.homework1.git
+					cd mle.homework1'''
             }
-        }
-
+        } 
+		
         stage('Checkout repo dir') {
             steps {
                 bat encoding: 'UTF-8', script: '''
                                                 chcp 65001
-                                                cd mle.homework2 && dir'''
+                                                cd . && dir'''
             }
         }
 
@@ -46,24 +46,30 @@ pipeline {
         stage('Create and run docker container') {
             steps {
                 script {
-
-					bat encoding: 'UTF-8', script: '''
-						chcp 65001
-						cd mle.homework2 && docker-compose -f docker-compose-run.yml build'''
-
-  
+                    try {
+                        bat encoding: 'UTF-8', script: '''
+                            chcp 65001
+                            cd mle.homework1 && docker-compose build'''
+                    }
+                    finally {
+                        bat encoding: 'UTF-8', script: '''
+                            chcp 65001
+                            cd mle.homework1
+                            docker-compose up -d
+                            '''
                     }
                 }
-            
+            }
         }
 
         stage('Checkout container logs') {
             steps {
-                dir("mle.homework2") {
+
+                dir("mle.homework1") {
                         bat encoding: 'UTF-8', script: '''
                             chcp 65001
-                            docker-compose -f docker-compose-run.yml up -d
-                            for /f %%i in ('docker ps -qf "name=^mlehomework2_app_1"') do set containerId=%%i
+                            docker-compose up -d
+                            for /f %%i in ('docker ps -qf "name=^mlehomework1-web-1"') do set containerId=%%i
                             echo %containerId%
                             IF "%containerId%" == "" (
                                 echo "No container running"
@@ -76,9 +82,9 @@ pipeline {
             }
         }
 
-        stage('Checkout run report'){
+        stage('Checkout coverage report'){
             steps{
-                dir("mle.homework2"){
+                dir("mle.homework1"){
                     bat encoding: 'UTF-8', script: '''
                         chcp 65001
                         docker-compose logs -t --tail 10
@@ -91,7 +97,7 @@ pipeline {
             steps{
                 bat encoding: 'UTF-8', script: '''
                     chcp 65001
-                    docker push zeroyal/mle.homework2:latest'''
+                    docker push zeroyal/mle.hw1:latest'''
             }
         }
 

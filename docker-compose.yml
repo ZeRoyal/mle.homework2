@@ -1,16 +1,8 @@
 version: '3.8'
 services:
-  app:
-    build: 
-      context: ./
-      dockerfile: ./Dockerfile
-    volumes:
-    - type: bind
-      source: ./data
-      target: /data
-    command: bash -c "python -m pytest tests"
-    ports:
-      - 8000:8000
-    environment:
-      PYTHONUNBUFFERED: 1
-    image: zeroyal/mle.homework2:latest
+   web:
+       build: .
+       command: bash -c "spark-submit src/train.py -t spark-submit && python src/train.py -t test && python -m pytest tests"
+       ports:
+           - 8000:8000
+       image: zeroyal/mle.hw1:latest

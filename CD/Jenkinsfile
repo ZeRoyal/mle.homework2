@@ -46,10 +46,14 @@ pipeline {
         stage('Create and run docker container') {
             steps {
                 script {
-
-					bat encoding: 'UTF-8', script: '''
-						chcp 65001
-						cd mle.homework2 && docker-compose -f docker-compose.yml build'''
+                    try {
+    					bat encoding: 'UTF-8', script: '''
+    						chcp 65001
+    						cd mle.homework2 && docker-compose -f docker-compose.yml build'''
+                     }
+                     finally{
+                        
+                     }
 
                     }
                 }

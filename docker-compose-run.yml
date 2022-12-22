@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  app:
+    build: 
+      context: ./
+      dockerfile: ./Dockerfile
+    volumes:
+    - type: bind
+      source: ./data
+      target: /data
+    command: bash -c "/opt/spark/bin/spark-submit src/train.py"
+    ports:
+      - 8000:8000
+    environment:
+      PYTHONUNBUFFERED: 1
+    image: zeroyal/mle.homework2:latest
